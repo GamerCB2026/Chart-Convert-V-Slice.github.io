@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>V Slice Universal Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+    body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+    .container { background: #161b22; padding: 2rem; border-radius: 12px; width: 100%; max-width: 850px; border: 1px solid #30363d; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    h1 { color: #58a6ff; margin: 0; }
+    .author { font-size: 0.8rem; color: #8b949e; margin-bottom: 20px; }
+    #drop-zone { border: 2px dashed #30363d; padding: 40px; border-radius: 8px; cursor: pointer; color: #58a6ff; background: #0d1117; margin-bottom: 20px; }
+    #drop-zone:hover { background: #161b22; border-color: #58a6ff; }
+    .code-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 1000px; margin-top: 20px; }
+    textarea { width: 100%; height: 300px; background: #0d1117; color: #79c0ff; border: 1px solid #30363d; border-radius: 6px; font-family: monospace; font-size: 11px; padding: 10px; resize: none; }
+    .btn-convert { background: #238636; color: white; border: none; padding: 15px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; display: none; }
+    .btn-convert:hover { background: #2ea043; }
+    #file-input { display: none; }
+    .status-box { background: #0d1117; border: 1px solid #30363d; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: left; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h1>V Slice Universal Converter</h1>
+    <div class="author">By Gamer_CountryBalls & Panchito Manriquez</div>
+    
+    <div class="status-box">
+        <strong>Compatibilidad Activada:</strong><br>
+        ✅ Psych Engine (con llave "song")<br>
+        ✅ Variantes de Psych (directo en raíz)<br>
+        ✅ <strong>Regla:</strong> Segundo número 0-3 (Player) | 4-7 (Oponente)
+    </div>
+
+    <div id="drop-zone">📂 Arrastra aquí tus archivos .json (Cualquier variante de Psych)</div>
+    <input type="file" id="file-input" accept=".json" multiple>
+    
+    <div id="file-list" style="margin-bottom: 10px; color: #8b949e; font-size: 0.9rem;"></div>
+    <button id="convert-btn" class="btn-convert">CONVERTIR Y DESCARGAR PACK (.ZIP)</button>
+</div>
+
+<div class="code-grid">
+    <div><h4>chart.json</h4><textarea id="chart-area" readonly></textarea></div>
+    <div><h4>metadata.json</h4><textarea id="meta-area" readonly></textarea></div>
+</div>
+
+<script>
+const dropZone = document.getElementById("drop-zone");
+const fileInput = document.getElementById("file-input");
+const convertBtn = document.getElementById("convert-btn");
+const chartArea = document.getElementById("chart-area");
+const metaArea = document.getElementById("meta-area");
+
+let selectedFiles = [];
+
+dropZone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", e => handleFiles(e.target.files));
+dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.style.borderColor = "#58a6ff"; });
+dropZone.addEventListener("drop", e => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
+
+function handleFiles(files) {
+    selectedFiles = Array.from(files).filter(f => f.name.endsWith('.json'));
+    if (selectedFiles.length > 0) {
+        document.getElementById("file-list").innerText = selectedFiles.length + " archivos listos.";
+        convertBtn.style.display = "block";
+    }
+}
+
+function getDiff(name) {
+    const n = name.toLowerCase();
+    if (n.includes("-easy")) return "easy";
+    if (n.includes("-hard")) return "hard";
+    return "normal";
+}
+
+convertBtn.addEventListener("click", async () => {
+    const finalChart = { version: "2.0.0", scrollSpeed: {}, notes: {}, events: [], generatedBy: "V-Slice Universal Converter" };
+    let finalMeta = null;
+    let songKey = "";
+
+    for (const file of selectedFiles) {
+        const rawData = JSON.parse(await file.text());
+        // DETECCIÓN AUTOMÁTICA DE ESTRUCTURA
+        const song = rawData.song && typeof rawData.song === "object" ? rawData.song : rawData;
+        
+        const diff = getDiff(file.name);
+        if (!songKey) songKey = (song.song || file.name.split("-")[0]).toLowerCase();
+
+        finalChart.scrollSpeed[diff] = song.speed || 2.5;
+        const notesArr = [];
+        let currentTime = 0;
+        let lastFocus = -1;
+        let bpm = song.bpm || 100;
+
+        song.notes?.forEach(sec => {
+            if (sec.changeBPM && sec.bpm) bpm = sec.bpm;
+
+            // Foco de cámara basado en mustHitSection
+            const focusChar = sec.mustHitSection ? 0 : 1;
+            if (focusChar !== lastFocus) {
+                finalChart.events.push({ t: Math.round(currentTime), e: "FocusCamera", v: { char: focusChar } });
+                lastFocus = focusChar;
+            }
+
+            sec.sectionNotes?.forEach(n => {
+                // TU REGLA DE ORO: n[1] es el carril directo
+                notesArr.push({
+                    t: n[0],      // Tiempo
+                    d: n[1],      // Segundo número (0-3 Jugador | 4-7 Oponente)
+                    l: n[2] || 0, // Longitud
+                    p: []
+                });
+            });
+            // Cálculo de tiempo por sección (beats * ms por beat)
+            currentTime += (60000 / bpm) * (sec.sectionBeats || 4);
+        });
+
+        notesArr.sort((a,b) => a.t - b.t);
+        finalChart.notes[diff] = notesArr;
+
+        if (!finalMeta) {
+            finalMeta = {
+                version: "2.2.4",
+                songName: song.song || songKey,
+                artist: "Unknown",
+                charter: "V-Slice Converter",
+                looped: false,
+                offsets: { instrumental: 0, altInstrumentals:{}, vocals:{}, altVocals:{} },
+                playData: {
+                    difficulties: [],
+                    characters: {
+                        player: song.player1 || "bf",
+                        girlfriend: song.gfVersion || "gf",
+                        opponent: song.player2 || "dad",
+                        instrumental: "",
+                        opponentVocals: ["Opponent"],
+                        playerVocals: ["Player"]
+                    },
+                    stage: song.stage || "stage",
+                    noteStyle: "funkin",
+                    ratings: { easy: 3, normal: 5, hard: 6 },
+                    previewStart: 0,
+                    previewEnd: 0
+                },
+                generatedBy: "Friday Night Funkin' - v0.8.1",
+                timeFormat: "ms",
+                timeChanges: [{ t: 0, b: 0, bpm: song.bpm || 100, n: 4, d: 4, bt: [4,4,4,4] }]
+            };
+        }
+        if (!finalMeta.playData.difficulties.includes(diff)) finalMeta.playData.difficulties.push(diff);
+    }
+
+    finalChart.events.sort((a,b) => a.t - b.t);
+    chartArea.value = JSON.stringify(finalChart, null, 2);
+    metaArea.value = JSON.stringify(finalMeta, null, 2);
+
+    const zip = new JSZip();
+    zip.file(`${songKey}-chart.json`, chartArea.value);
+    zip.file(`${songKey}-metadata.json`, metaArea.value);
+    const content = await zip.generateAsync({type:"blob"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(content);
+    a.download = `${songKey}_VSlice_Pack.zip`;
+    a.click();
+});
+</script>
+</body>
+</html>
